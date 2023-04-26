@@ -1,0 +1,289 @@
+/* Get List of Reporting Periods from Tobacco Dependence Record */ 			
+IF OBJECT_ID('[NHSE_AlcoholTobacco].[temp].[Date]') IS NOT NULL DROP TABLE 			
+[NHSE_AlcoholTobacco].[temp].[Date]			
+				
+select distinct concat(right(Reporting_Period,4),'-',left(right(Reporting_Period,7),2),'-','01')  as Reporting_Period			
+		,'1' as Join_Ref	
+into [NHSE_AlcoholTobacco].[temp].[Date]			
+from [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Record]			
+	
+	
+				
+/* Prepare base table, this means that rows exist for all potential submissions whether there is a submission or not  */ 			
+IF OBJECT_ID('[NHSE_AlcoholTobacco].[temp].[base]') IS NOT NULL DROP TABLE 			
+[NHSE_AlcoholTobacco].[temp].[base]			
+				
+select distinct Reporting_Period			
+		,Org_Code	
+		,Organisation_Code_Name	
+		,Region_Code_Name	
+		,concat(b.ICB_Code,':',Integrated_Care_Board_Name) as ICB_Code_Name
+		,Setting_Type	
+		,Setting_type as Setting_Type_Split 	
+into [NHSE_AlcoholTobacco].[temp].[base]			
+from [NHSE_AlcoholTobacco].[dbo].[SOF_Ref_Provider_Assurance] a 			
+left join [NHSE_Reference].[dbo].[vw_Ref_ODS_Provider_Hierarchies] b on a.Org_Code = b.Organisation_Code			
+cross join [NHSE_AlcoholTobacco].[temp].[Date] 			
+order by Org_Code, Reporting_Period, Setting_Type	
+
+
+
+/* Query SDCS Data */ 
+IF OBJECT_ID('[NHSE_AlcoholTobacco].[temp].[sdcs]') IS NOT NULL DROP TABLE 			
+[NHSE_AlcoholTobacco].[temp].[sdcs]	
+
+select  cast(cast(a.[Reporting.Period] -2 as datetime) as date) as [Reporting.Period]
+					,left([Organisation.Code],3) as Organisation_Code
+		,sum(case when b.[Reporting.Period] is not null then 1 else 0 end) as Count_Previous_Submissions
+into temp.sdcs
+from [dbo].[TobaccoDependence_SDCS] a 
+left join(select   cast(cast(a.[Reporting.Period] -2 as datetime) as date) as [Reporting.Period]
+					,left([Organisation.Code],3) as Organisation_Code
+					,[Status.of.Submission]
+		  from [dbo].[TobaccoDependence_SDCS] a
+		  where [Status.of.Submission] = 'Complete') b 
+on left([Organisation.Code],3) = b.Organisation_Code 
+and   cast(cast(a.[Reporting.Period] -2 as datetime) as date) > b.[Reporting.Period]
+where a.[Status.of.Submission] = 'Complete'
+group by   cast(cast(a.[Reporting.Period] -2 as datetime) as date)
+,left([Organisation.Code],3)
+
+
+/* Query Summary Data */ 
+IF OBJECT_ID('[NHSE_AlcoholTobacco].[temp].[summary]') IS NOT NULL DROP TABLE 			
+[NHSE_AlcoholTobacco].[temp].[summary]	
+ 			
+select AuditID			
+		,concat(right(Reporting_Period,4),'-',left(right(Reporting_Period,7),2),'-','01') as Reporting_Period	
+		,concat(ODS_CODE, ' : ', ODS_NAME) as ODS_Code_Name	
+		,coalesce(COMPLETESMOKINGSTATUS_COMMUNITY,0) + coalesce(COMPLETESMOKINGSTATUS_IP,0) + coalesce(COMPLETESMOKINGSTATUS_MATERNITY,0) + coalesce(COMPLETESMOKINGSTATUS_OP,0) as COMPLETE_SMOKING_STATUS	
+	into temp.summary
+	from [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Summary]	
+
+
+/* Query Record Data */ 
+IF OBJECT_ID('[NHSE_AlcoholTobacco].[temp].[Record]') IS NOT NULL DROP TABLE 			
+[NHSE_AlcoholTobacco].[temp].[Record]			
+				
+select concat(right(Reporting_Period,4),'-',left(right(Reporting_Period,7),2),'-','01') as Reporting_Period			
+		,c.Region_Code_Name	
+		,c.ICB_Code_Name
+		,a.ODS_CODE	
+		,concat(a.ODS_CODE, ': ', a.ODS_NAME) as ODS_Code_Name	
+		,case when SETTING_TYPE = '1' and Activity_Type in ('1','2') then 'Physical Acute' 	
+				when SETTING_TYPE = '1' and Activity_Type = '3' then 'Children or Community' 	
+				when SETTING_TYPE = '2' then 'Adult Mental Health' 
+				when SETTING_TYPE = '3' then 'Maternity' end as Setting_Type
+		,COUNT(*) as Count_Records	
+		,COUNT(distinct pseudo_nhs_number_ncdr) as Count_Unique_Patients	
+		,round(cast(SUM(case when Activity_Date is not null then 1 else 0 end) as float) / 	
+			cast(COUNT(*) as float),2) as Percent_Date_Valid	
+		,round(cast(SUM(case when Hospital_Spell_No is not null then 1 else 0 end) as float) / 	
+			CAST(Count(*) as float),2) as Percent_SUS_Linkable	
+		,round(cast(sum(case when SMOKINGSTATUS is not null then 1 else 0 end) as float) / 	
+			cast(COUNT(*) as float),2) as Percent_SmokingStatus_Complete	
+		,ROUND(cast(sum(case when TobaccoDependence_CarePlan is not null and SEEN_INHOUSE is not null then 1 else 0 end) as float) / 	
+			nullif(cast(sum(case when SEEN_INHOUSE is not null then 1 else 0 end) as float),0),2) as Percent_CarePlan_Complete 	
+		,cast(sum(case when INHOUSE_REFERRAL = 'Y' then 1 else 0 end) as float) as Referrals_Count	
+into [NHSE_AlcoholTobacco].[temp].[Record]			
+from [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Record] a 			
+left join (select distinct Hospital_Spell_No from [NHSE_SUSPlus_Live].[dbo].[tbl_Data_SEM_APCS]) b on a.HOSPITAL_SPELL_ID = b.Hospital_Spell_No			
+LEFT join [NHSE_AlcoholTobacco].[dbo].[Tobacco_Tableau_Ref_Provider] c on a.ODS_CODE = c.ODS_Code			
+group by concat(right(Reporting_Period,4),'-',left(right(Reporting_Period,7),2),'-','01')			
+		,c.Region_Code_Name	
+		,c.ICB_Code_Name
+		,concat(a.ODS_CODE, ': ', a.ODS_NAME)	
+		,case when SETTING_TYPE = '1' and Activity_Type in ('1','2') then 'Physical Acute' 	
+				when SETTING_TYPE = '1' and Activity_Type = '3' then 'Children or Community' 	
+				when SETTING_TYPE = '2' then 'Adult Mental Health' 
+				when SETTING_TYPE = '3' then 'Maternity' end
+		,a.ODS_CODE	
+
+
+
+
+
+/* Prepare wide staging table  */ 
+IF OBJECT_ID('[NHSE_AlcoholTobacco].[temp].[staging]') IS NOT NULL DROP TABLE 			
+[NHSE_AlcoholTobacco].[temp].[staging]		
+
+
+select 	base.Reporting_Period
+		,base.Organisation_Code_Name
+		,base.Region_Code_Name
+		,base.ICB_Code_Name
+		,base.Setting_Type
+		,sdcs.[Status.of.Submission] as SDCS_Submission_Complete
+		,record.Count_Records as Patient_Records
+		,summary.COMPLETE_SMOKING_STATUS as Aggregate_Records
+		,sdcs_prev.Count_Previous_Submissions
+		,record.Percent_Date_Valid
+		,record.Percent_SmokingStatus_Complete
+		,record.Percent_CarePlan_Complete
+		,record.Referrals_Count
+		,record.Percent_SUS_Linkable
+		,case when record.Count_Records >= 10 then 1 else 0 end + 
+		 case when summary.COMPLETE_SMOKING_STATUS >= 10 then 1 else 0 end + 
+		 case when record.Referrals_Count >= 10 then 1 else 0 end + 
+		 case when record.Percent_Date_Valid > 0.75 then 1 else 0 end + 
+		 case when record.Percent_SUS_Linkable > 0.75 then 1 else 0 end + 
+		 case when record.Percent_SmokingStatus_Complete > 0.75 then 1 else 0 end +
+		 case when record.Percent_CarePlan_Complete > 0.75 then 1 else 0 end as Count_Passes
+into temp.staging
+from temp.base base
+left join temp.record record on base.Org_Code = record.ODS_CODE
+							 and base.Reporting_Period = record.Reporting_Period
+							 and base.Setting_Type = record.Setting_Type
+left join temp.summary summary on base.Organisation_Code_Name = summary.ODS_Code_Name
+							   and base.Reporting_Period = summary.Reporting_Period
+left join temp.sdcs sdcs_prev on base.Reporting_Period = sdcs_prev.[Reporting.Period]
+						 and base.Org_Code = sdcs_prev.Organisation_Code 
+left join (select distinct cast(cast(a.[Reporting.Period] -2 as datetime) as date) as [Reporting.Period]
+					,[Organisation.Code]
+					,[Status.of.Submission]
+			from [dbo].[TobaccoDependence_SDCS] a
+			where [Status.of.Submission] = 'Complete') sdcs
+	on base.Reporting_Period = sdcs.[Reporting.Period]
+	and left(base.Organisation_Code_Name,3) = sdcs.[Organisation.Code] 
+
+
+
+/* Prepare Long Table and output */ 
+IF OBJECT_ID('[NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_DQ_Tableau]') IS NOT NULL DROP TABLE 			
+[NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_DQ_Tableau]		
+
+select Reporting_Period
+		,Organisation_Code_Name
+		,Region_Code_Name
+		,ICB_Code_Name
+		,Setting_Type
+		,Metric_Name
+		,Metric_Type
+		,Value
+		,DQ_Check
+into dbo.TobaccoDependence_DQ_Tableau
+from 
+(
+
+
+select Reporting_Period
+		,Organisation_Code_Name
+		,Region_Code_Name
+		,ICB_Code_Name
+		,Setting_Type
+		,'Patient Records Submitted' as Metric_Name
+		,'Count' as Metric_Type
+		,Patient_Records as Value
+		,case when Patient_Records >= 10 then 'Pass' else 'Fail' end as DQ_Check
+from temp.staging
+
+union all 
+
+select Reporting_Period
+		,Organisation_Code_Name
+		,Region_Code_Name
+		,ICB_Code_Name
+		,Setting_Type
+		,'Aggregate Records Submitted' as Metric_Name
+		,'Count' as Metric_Type
+		,Aggregate_Records as Value
+		,case when Aggregate_Records >= 10 then 'Pass' else 'Fail' end as DQ_Check
+from temp.staging
+
+union all 
+
+select Reporting_Period
+		,Organisation_Code_Name
+		,Region_Code_Name
+		,ICB_Code_Name
+		,Setting_Type
+		,'Patient Referrals Submitted' as Metric_Name
+		,'Count' as Metric_Type
+		,Referrals_Count as Value
+		,case when Referrals_Count >= 10 then 'Pass' else 'Fail' end as DQ_Check
+from temp.staging
+
+union all 
+
+select Reporting_Period
+		,Organisation_Code_Name
+		,Region_Code_Name
+		,ICB_Code_Name
+		,Setting_Type
+		,'Activity Date Valid' as Metric_Name
+		,'Proportion' as Metric_Type
+		,Percent_Date_Valid as Value
+		,case when Percent_Date_Valid > 0.75 then 'Pass' else 'Fail' end as DQ_Check
+from temp.staging
+
+union all 
+
+select Reporting_Period
+		,Organisation_Code_Name
+		,Region_Code_Name
+		,ICB_Code_Name
+		,Setting_Type
+		,'Records Linkable to SUS' as Metric_Name
+		,'Proportion' as Metric_Type
+		,Percent_SUS_Linkable as Value
+		,case when Percent_SUS_Linkable > 0.75 then 'Pass' else 'Fail' end as DQ_Check
+from temp.staging
+
+union all 
+
+select Reporting_Period
+		,Organisation_Code_Name
+		,Region_Code_Name
+		,ICB_Code_Name
+		,Setting_Type
+		,'Smoking Status Field Complete' as Metric_Name
+		,'Proportion' as Metric_Type
+		,Percent_SmokingStatus_Complete as Value
+		,case when Percent_SmokingStatus_Complete > 0.75 then 'Pass' else 'Fail' end as DQ_Check
+from temp.staging
+
+union all 
+
+select Reporting_Period
+		,Organisation_Code_Name
+		,Region_Code_Name
+		,ICB_Code_Name
+		,Setting_Type
+		,'Care Plan Field Complete' as Metric_Name
+		,'Proportion' as Metric_Type
+		,Percent_CarePlan_Complete as Value
+		,case when Percent_CarePlan_Complete > 0.75 then 'Pass' else 'Fail' end as DQ_Check
+from temp.staging
+
+union all 
+
+select Reporting_Period
+		,Organisation_Code_Name
+		,Region_Code_Name
+		,ICB_Code_Name
+		,Setting_Type
+		,'DQ Score' as Metric_Name
+		,'Count' as Metric_Type
+		,Count_Passes as Value
+		,case when SDCS_Submission_Complete is not null and Count_Passes = 7 and (Patient_Records > 0 or Patient_Records is not null) then 'A'
+			  when SDCS_Submission_Complete is not null and Count_Passes = 6 and (Patient_Records > 0 or Patient_Records is not null) then 'B6'
+			  when SDCS_Submission_Complete is not null and Count_Passes = 5 and (Patient_Records > 0 or Patient_Records is not null) then 'B5'
+			  when SDCS_Submission_Complete is not null and Count_Passes = 4 and (Patient_Records > 0 or Patient_Records is not null) then 'B4'
+			  when SDCS_Submission_Complete is not null and Count_Passes = 3 and (Patient_Records > 0 or Patient_Records is not null) then 'B3'
+			  when SDCS_Submission_Complete is not null and Count_Passes = 2 and (Patient_Records > 0 or Patient_Records is not null) then 'B2'
+			  when SDCS_Submission_Complete is not null and Count_Passes = 1 and (Patient_Records > 0 or Patient_Records is not null) then 'B1' 
+			  when SDCS_Submission_Complete is not null and Count_Passes = 0 and (Patient_Records > 0 or Patient_Records is not null) then 'C0' 
+			  when SDCS_Submission_Complete is not null and (Patient_Records = 0 or Patient_Records is null) then 'CX'
+			  when SDCS_Submission_Complete is null and Count_Previous_Submissions > 0 then 'DP'
+			  when SDCS_Submission_Complete is null and (Count_Previous_Submissions = 0 or Count_Previous_Submissions is null) then 'D0'
+			  else 'NA' end as DQ_Check
+from temp.staging
+) a
+
+/* drop temp tables */ 				
+drop table [NHSE_AlcoholTobacco].[temp].[Date]				
+drop table [NHSE_AlcoholTobacco].[temp].[base]				
+drop table [NHSE_AlcoholTobacco].[temp].[Record]	
+drop table [NHSE_AlcoholTobacco].[temp].[sdcs]	
+drop table [NHSE_AlcoholTobacco].[temp].[staging]	
+drop table [NHSE_AlcoholTobacco].[temp].[summary]	
