@@ -1,0 +1,614 @@
+/* Prepare Elements Table */ 
+IF OBJECT_ID('[NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Elements]') IS NOT NULL 
+DROP TABLE [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Elements]
+
+create table [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Elements] (
+
+Element_ID varchar(50)
+,Date datetime
+,Provider_Code varchar(50)
+,Commissioner_Code varchar(50)
+,Setting_Type varchar(100)
+,Health_Inequalities_Group varchar(255)
+,Health_Inequalities_SubGroup varchar(255)
+,Value int
+
+)
+
+/* Prepare table to loop through patient level data elements */ 
+IF OBJECT_ID('[NHSE_AlcoholTobacco].[temp].[Elements_Audit]') IS NOT NULL 
+DROP TABLE [NHSE_AlcoholTobacco].[temp].[Elements_Audit]
+
+select ROW_NUMBER() OVER (ORDER BY Element_ID) AS Row
+		,Element_ID
+		,Element_Source
+		,Element_Logic
+into [NHSE_AlcoholTobacco].[temp].[Elements_Audit]
+from [dbo].[TobaccoDependence_Ref_Elements] a
+where Reporting_Flag = '1'
+
+/* Prepare variables to loop through data elements */ 
+
+declare @Row int
+declare @Row_Max int
+declare @Element_ID as varchar(10)
+declare @Element_Source as varchar(255)
+declare @Element_Logic as varchar(max)
+declare @Element_Count as int
+declare @Element_Fail as int
+
+SELECT @Row = (select top 1 Row from [NHSE_AlcoholTobacco].[temp].[Elements_Audit])
+SELECT @Row_Max = (select max(Row) from [NHSE_AlcoholTobacco].[temp].[Elements_Audit])
+SET @Element_ID = (select Element_ID from [NHSE_AlcoholTobacco].[temp].[Elements_Audit] where Row = @Row)
+SET @Element_Source = (select Element_Source from [NHSE_AlcoholTobacco].[temp].[Elements_Audit] where Row = @Row)
+SET @Element_Logic = (select Element_Logic from [NHSE_AlcoholTobacco].[temp].[Elements_Audit] where Row = @Row)
+SET @Element_Count = 0
+SET @Element_Fail = 0
+
+WHILE @Row <= @Row_Max
+
+BEGIN
+
+		BEGIN TRY
+
+		insert into [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Elements_Refresh_Log] (Run_ID,Element_ID,Refresh_Start,Refresh_Status)
+		values (@Run_ID,@Element_ID,GETDATE(),'Running')
+
+		BEGIN
+
+		if @Element_Source = 'Tobacco Patient Level Dataset'
+			
+			BEGIN
+
+			exec(
+			'
+			insert into [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Elements]
+			select Element_ID
+					,Date
+					,Provider_Code
+					,Commissioner_Code
+					,Setting_Type
+					,Health_Inequalities_Group
+					,Health_Inequalities_SubGroup
+					,Value
+			from (
+			select	''' + @Element_ID + ''' as Element_ID
+				,DATEADD(MONTH, DATEDIFF(MONTH, 0, [ACTIVITY_DATE]), 0) as Date
+				,ODS_CODE as Provider_Code
+				,SubICB_Code as Commissioner_Code
+				,case 
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''1''
+							then ''Acute Inpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''2''
+							then ''Acute Outpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''3''
+							then ''Acute Community''
+						when [SETTING_TYPE] = ''2''
+							then ''Mental Health''
+						when [SETTING_TYPE] = ''3''
+							then ''Maternity''
+						else ''Unknown''
+						end as Setting_Type
+				,''Total'' as Health_Inequalities_Group
+				,''Total'' as Health_Inequalities_SubGroup
+				,count(RecordID) as Value
+			from dbo.TobaccoDependence_Record_Raw TDR
+			where Activity_Date between ''' + @StartDate + ''' and ''' + @EndDate + ''' 
+			and ' + @Element_Logic + ' 
+			group by DATEADD(MONTH, DATEDIFF(MONTH, 0, [ACTIVITY_DATE]), 0)
+				,ODS_CODE
+				,SubICB_Code
+				,case 
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''1''
+							then ''Acute Inpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''2''
+							then ''Acute Outpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''3''
+							then ''Acute Community''
+						when [SETTING_TYPE] = ''2''
+							then ''Mental Health''
+						when [SETTING_TYPE] = ''3''
+							then ''Maternity''
+						else ''Unknown''
+						end
+
+			union all
+			
+			select	''' + @Element_ID + ''' as Element_ID
+				,DATEADD(MONTH, DATEDIFF(MONTH, 0, [ACTIVITY_DATE]), 0) as Date
+				,ODS_CODE as Provider_Code
+				,SubICB_Code as Commissioner_Code
+				,case 
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''1''
+							then ''Acute Inpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''2''
+							then ''Acute Outpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''3''
+							then ''Acute Community''
+						when [SETTING_TYPE] = ''2''
+							then ''Mental Health''
+						when [SETTING_TYPE] = ''3''
+							then ''Maternity''
+						else ''Unknown''
+						end as Setting_Type
+				,''Gender'' as Health_Inequalities_Group
+				,case 
+					when [GENDER] = ''1''
+						then ''Male''
+					when [GENDER] = ''2''
+						then ''Female''
+					when [GENDER] = ''9''
+						then ''Is not stated''
+					else ''Unknown''
+					end as Health_Inequalities_SubGroup
+				,count(RecordID) as Value
+			from dbo.TobaccoDependence_Record_Raw TDR
+			where Activity_Date between ''' + @StartDate + ''' and ''' + @EndDate + ''' 
+			and ' + @Element_Logic + ' 
+			group by DATEADD(MONTH, DATEDIFF(MONTH, 0, [ACTIVITY_DATE]), 0)
+				,ODS_CODE
+				,SubICB_Code
+				,case 
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''1''
+							then ''Acute Inpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''2''
+							then ''Acute Outpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''3''
+							then ''Acute Community''
+						when [SETTING_TYPE] = ''2''
+							then ''Mental Health''
+						when [SETTING_TYPE] = ''3''
+							then ''Maternity''
+						else ''Unknown''
+						end
+				,case 
+					when [GENDER] = ''1''
+						then ''Male''
+					when [GENDER] = ''2''
+						then ''Female''
+					when [GENDER] = ''9''
+						then ''Is not stated''
+					else ''Unknown''
+					end
+
+			union all 
+
+			select	''' + @Element_ID + ''' as Element_ID
+				,DATEADD(MONTH, DATEDIFF(MONTH, 0, [ACTIVITY_DATE]), 0) as Date
+				,ODS_CODE as Provider_Code
+				,SubICB_Code as Commissioner_Code
+				,case 
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''1''
+							then ''Acute Inpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''2''
+							then ''Acute Outpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''3''
+							then ''Acute Community''
+						when [SETTING_TYPE] = ''2''
+							then ''Mental Health''
+						when [SETTING_TYPE] = ''3''
+							then ''Maternity''
+						else ''Unknown''
+						end as Setting_Type
+				,''Age'' as Health_Inequalities_Group
+				,case 
+					when [Der_Age_at_CDS_Activity_date] < 18
+						then ''Under 18''
+					when [Der_Age_at_CDS_Activity_date] >= 18
+						and [Der_Age_at_CDS_Activity_date] < 35
+						then ''18-34''
+					when [Der_Age_at_CDS_Activity_date] >= 35
+						and [Der_Age_at_CDS_Activity_date] < 44
+						then ''35-44''
+					when [Der_Age_at_CDS_Activity_date] >= 45
+						and [Der_Age_at_CDS_Activity_date] < 60
+						then ''45-59''
+					when [Der_Age_at_CDS_Activity_date] >= 60
+						then ''60 and over''
+					else ''Unknown''
+					end as Health_Inequalities_SubGroup
+				,count(RecordID) as Value
+			from dbo.TobaccoDependence_Record_Raw TDR
+			where Activity_Date between ''' + @StartDate + ''' and ''' + @EndDate + ''' 
+			and ' + @Element_Logic + ' 
+			group by DATEADD(MONTH, DATEDIFF(MONTH, 0, [ACTIVITY_DATE]), 0)
+				,ODS_CODE
+				,SubICB_Code
+				,case 
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''1''
+							then ''Acute Inpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''2''
+							then ''Acute Outpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''3''
+							then ''Acute Community''
+						when [SETTING_TYPE] = ''2''
+							then ''Mental Health''
+						when [SETTING_TYPE] = ''3''
+							then ''Maternity''
+						else ''Unknown''
+						end
+				  ,case 
+					when [Der_Age_at_CDS_Activity_date] < 18
+						then ''Under 18''
+					when [Der_Age_at_CDS_Activity_date] >= 18
+						and [Der_Age_at_CDS_Activity_date] < 35
+						then ''18-34''
+					when [Der_Age_at_CDS_Activity_date] >= 35
+						and [Der_Age_at_CDS_Activity_date] < 44
+						then ''35-44''
+					when [Der_Age_at_CDS_Activity_date] >= 45
+						and [Der_Age_at_CDS_Activity_date] < 60
+						then ''45-59''
+					when [Der_Age_at_CDS_Activity_date] >= 60
+						then ''60 and over''
+					else ''Unknown''
+					end
+
+		/*	union all 
+
+			select	''' + @Element_ID + ''' as Element_ID
+				,DATEADD(MONTH, DATEDIFF(MONTH, 0, [ACTIVITY_DATE]), 0) as Date
+				,ODS_CODE as Provider_Code
+				,SubICB_Code as Commissioner_Code
+				,case 
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''1''
+							then ''Acute Inpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''2''
+							then ''Acute Outpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''3''
+							then ''Acute Community''
+						when [SETTING_TYPE] = ''2''
+							then ''Mental Health''
+						when [SETTING_TYPE] = ''3''
+							then ''Maternity''
+						else ''Unknown''
+						end as Setting_Type
+				,''Ethnicity'' as Health_Inequalities_Group
+				,ETH.Main_Description as Health_Inequalities_SubGroup
+				,count(RecordID) as Value
+			from dbo.TobaccoDependence_Record_Raw TDR
+
+			left join (
+				select distinct [Main_Code_Text]
+					,[Main_Description]
+				from [NHSE_UKHF].[Data_Dictionary].[vw_Ethnic_Category_Code_SCD]
+				) ETH on TDR.ETHNICITY = ETH.Main_Code_Text
+			where Activity_Date between ''' + @StartDate + ''' and ''' + @EndDate + ''' 
+			and ' + @Element_Logic + ' 
+			group by DATEADD(MONTH, DATEDIFF(MONTH, 0, [ACTIVITY_DATE]), 0)
+				,ODS_CODE
+				,SubICB_Code
+				,case 
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''1''
+							then ''Acute Inpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''2''
+							then ''Acute Outpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''3''
+							then ''Acute Community''
+						when [SETTING_TYPE] = ''2''
+							then ''Mental Health''
+						when [SETTING_TYPE] = ''3''
+							then ''Maternity''
+						else ''Unknown''
+						end
+				,ETH.Main_Description */
+
+				union all 
+
+				select	''' + @Element_ID + ''' as Element_ID
+				,DATEADD(MONTH, DATEDIFF(MONTH, 0, [ACTIVITY_DATE]), 0) as Date
+				,ODS_CODE as Provider_Code
+				,SubICB_Code as Commissioner_Code
+				,case 
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''1''
+							then ''Acute Inpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''2''
+							then ''Acute Outpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''3''
+							then ''Acute Community''
+						when [SETTING_TYPE] = ''2''
+							then ''Mental Health''
+						when [SETTING_TYPE] = ''3''
+							then ''Maternity''
+						else ''Unknown''
+						end as Setting_Type
+				,''Ethnic Group'' as Health_Inequalities_Group
+				,case 
+					when [ETHNICITY] in (''A'', ''B'', ''C'')
+						then ''White''
+					when [ETHNICITY] in (''D'', ''E'', ''F'', ''G'')
+						then ''Mixed or multiple ethnic groups''
+					when [ETHNICITY] in (''H'', ''J'', ''K'', ''L'')
+						then ''Asian or Asian British''
+					when [ETHNICITY] in (''M'', ''N'', ''P'')
+						then ''Black, African, Caribbean or Black British''
+					when [ETHNICITY] in (''R'', ''S'')
+						then ''Other ethnic group''
+					else ''Unknown'' end as Health_Inequalities_SubGroup
+				,count(RecordID) as Value
+			from dbo.TobaccoDependence_Record_Raw TDR
+			where Activity_Date between ''' + @StartDate + ''' and ''' + @EndDate + ''' 
+			and ' + @Element_Logic + ' 
+			group by DATEADD(MONTH, DATEDIFF(MONTH, 0, [ACTIVITY_DATE]), 0)
+				,ODS_CODE
+				,SubICB_Code
+				,case 
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''1''
+							then ''Acute Inpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''2''
+							then ''Acute Outpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''3''
+							then ''Acute Community''
+						when [SETTING_TYPE] = ''2''
+							then ''Mental Health''
+						when [SETTING_TYPE] = ''3''
+							then ''Maternity''
+						else ''Unknown''
+						end
+					,case 
+					when [ETHNICITY] in (''A'', ''B'', ''C'')
+						then ''White''
+					when [ETHNICITY] in (''D'', ''E'', ''F'', ''G'')
+						then ''Mixed or multiple ethnic groups''
+					when [ETHNICITY] in (''H'', ''J'', ''K'', ''L'')
+						then ''Asian or Asian British''
+					when [ETHNICITY] in (''M'', ''N'', ''P'')
+						then ''Black, African, Caribbean or Black British''
+					when [ETHNICITY] in (''R'', ''S'')
+						then ''Other ethnic group''
+					else ''Unknown'' end
+
+				union all 
+
+				select	''' + @Element_ID + ''' as Element_ID
+				,DATEADD(MONTH, DATEDIFF(MONTH, 0, [ACTIVITY_DATE]), 0) as Date
+				,ODS_CODE as Provider_Code
+				,SubICB_Code as Commissioner_Code
+				,case 
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''1''
+							then ''Acute Inpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''2''
+							then ''Acute Outpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''3''
+							then ''Acute Community''
+						when [SETTING_TYPE] = ''2''
+							then ''Mental Health''
+						when [SETTING_TYPE] = ''3''
+							then ''Maternity''
+						else ''Unknown''
+						end as Setting_Type
+				,''IMD Quintile'' as Health_Inequalities_Group
+				,case 
+					when IMD.IMD_Decile in (1, 2)
+						then ''Quintile 1 - Most deprived''
+					when IMD.IMD_Decile in (3, 4)
+						then ''Quintile 2''
+					when IMD.IMD_Decile in (5, 6)
+						then ''Quintile 3''
+					when IMD.IMD_Decile in (7, 8)
+						then ''Quintile 4''
+					when IMD.IMD_Decile in (9, 10)
+						then ''Quintile 5 - Least deprived''
+					else ''Unknown'' 
+					end as Health_Inequalities_SubGroup
+				,count(RecordID) as Value
+			from dbo.TobaccoDependence_Record_Raw TDR
+			left join [NHSE_UKHF].[Demography].[vw_Index_Of_Multiple_Deprivation_By_LSOA1] IMD on TDR.LSOA_OF_RESIDENCE COLLATE DATABASE_DEFAULT = IMD.LSOA_Code COLLATE DATABASE_DEFAULT
+				and IMD.[Effective_Snapshot_Date] = ''2019-12-31''
+			where Activity_Date between ''' + @StartDate + ''' and ''' + @EndDate + ''' 
+			and ' + @Element_Logic + ' 
+			group by DATEADD(MONTH, DATEDIFF(MONTH, 0, [ACTIVITY_DATE]), 0)
+				,ODS_CODE
+				,SubICB_Code
+				,case 
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''1''
+							then ''Acute Inpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''2''
+							then ''Acute Outpatient''
+						when [SETTING_TYPE] = ''1''
+							and [ACTIVITY_TYPE] = ''3''
+							then ''Acute Community''
+						when [SETTING_TYPE] = ''2''
+							then ''Mental Health''
+						when [SETTING_TYPE] = ''3''
+							then ''Maternity''
+						else ''Unknown''
+						end
+					,case 
+					when IMD.IMD_Decile in (1, 2)
+						then ''Quintile 1 - Most deprived''
+					when IMD.IMD_Decile in (3, 4)
+						then ''Quintile 2''
+					when IMD.IMD_Decile in (5, 6)
+						then ''Quintile 3''
+					when IMD.IMD_Decile in (7, 8)
+						then ''Quintile 4''
+					when IMD.IMD_Decile in (9, 10)
+						then ''Quintile 5 - Least deprived''
+					else ''Unknown'' 
+					end) a'
+			)
+
+			END
+
+			else if @Element_Source = 'Tobacco Aggregate Level Dataset'
+
+			BEGIN 
+
+			
+			exec('
+			insert into [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Elements]
+			select Element_ID
+					,Date
+					,Provider_Code
+					,Commissioner_Code
+					,Setting_Type
+					,Health_Inequalities_Group
+					,Health_Inequalities_SubGroup
+					,Value
+			from (
+			select ''001'' as Element_ID
+					,concat(right(Reporting_Period,4),''-'',left(right(Reporting_Period,7),2),''-'',''01'') as Date
+					,ODS_CODE as Provider_Code
+					,NULL as Commissioner_Code
+					,''Acute Inpatient'' as Setting_Type
+					,''Total'' as Health_Inequalities_Group
+					,''Total'' as Health_Inequalities_SubGroup
+					,SUM(COMPLETESMOKINGSTATUS_IP) as Value
+			from [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Summary] 
+			where concat(right(Reporting_Period,4),''-'',left(right(Reporting_Period,7),2),''-'',''01'') between ''' + @StartDate + ''' and ''' + @EndDate + '''
+			group by concat(right(Reporting_Period,4),''-'',left(right(Reporting_Period,7),2),''-'',''01'')
+					,ODS_CODE
+
+			union all 
+
+			select ''001'' as Element_ID
+					,concat(right(Reporting_Period,4),''-'',left(right(Reporting_Period,7),2),''-'',''01'') as Date
+					,ODS_CODE as Provider_Code
+					,NULL as Commissioner_Code
+					,''Maternity'' as Setting_Type
+					,''Total'' as Health_Inequalities_Group
+					,''Total'' as Health_Inequalities_SubGroup
+					,SUM(COMPLETESMOKINGSTATUS_MATERNITY) as Value
+			from [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Summary] 
+			where concat(right(Reporting_Period,4),''-'',left(right(Reporting_Period,7),2),''-'',''01'') between ''' + @StartDate + ''' and ''' + @EndDate + '''
+			group by concat(right(Reporting_Period,4),''-'',left(right(Reporting_Period,7),2),''-'',''01'')
+					,ODS_CODE
+
+			union all 
+
+			select ''001'' as Element_ID
+					,concat(right(Reporting_Period,4),''-'',left(right(Reporting_Period,7),2),''-'',''01'') as Date
+					,ODS_CODE as Provider_Code
+					,NULL as Commissioner_Code
+					,''Acute Outpatient'' as Setting_Type
+					,''Total'' as Health_Inequalities_Group
+					,''Total'' as Health_Inequalities_SubGroup
+					,SUM(COMPLETESMOKINGSTATUS_OP) as Value
+			from [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Summary] 
+			where concat(right(Reporting_Period,4),''-'',left(right(Reporting_Period,7),2),''-'',''01'') between ''' + @StartDate + ''' and ''' + @EndDate + '''
+			group by concat(right(Reporting_Period,4),''-'',left(right(Reporting_Period,7),2),''-'',''01'')
+					,ODS_CODE
+
+			union all 
+
+			select ''001'' as Element_ID
+					,concat(right(Reporting_Period,4),''-'',left(right(Reporting_Period,7),2),''-'',''01'') as Date
+					,ODS_CODE as Provider_Code
+					,NULL as Commissioner_Code
+					,''Acute Community'' as Setting_Type
+					,''Total'' as Health_Inequalities_Group
+					,''Total'' as Health_Inequalities_SubGroup
+					,SUM(COMPLETESMOKINGSTATUS_COMMUNITY) as Value
+			from [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Summary] 
+			where concat(right(Reporting_Period,4),''-'',left(right(Reporting_Period,7),2),''-'',''01'') between ''' + @StartDate + ''' and ''' + @EndDate + '''
+			group by concat(right(Reporting_Period,4),''-'',left(right(Reporting_Period,7),2),''-'',''01'')
+					,ODS_CODE) agg')
+
+			END
+
+			else if @Element_Source = 'SUS+' 
+
+			BEGIN
+
+			exec(
+			'insert into [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Elements]
+			 select ''' + @Element_ID + ''' as Element_ID 
+					,DATEADD(MONTH, DATEDIFF(MONTH, 0, [Attendance_Date]), 0) as Date
+					,Provider_Current as Provider_Code
+					,NULL as Commissioner_Code
+				    ,case when Dimention_4 = ''Specific Acute'' then ''Acute Inpatient'' 
+						 when Dimention_4 = ''Maternity'' then ''Maternity'' 
+						 end as Setting_Type
+					,''Total'' as Health_Inequalities_Group
+					,''Total'' as Health_Inequalities_SubGroup
+				   ,SUM(Adjusted) as Value
+			from [NHSE_SUSPlus_Reporting].[Data].[PAT_Intermediate_Table_APC] a 
+			inner join (select ODS_Code from [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Ref_Provider]) b on a.Provider_Current = b.ODS_Code
+			where Dimention_4 in (''Maternity'', ''Specific Acute'')
+			and Dimention_1 in (''Ord. Elective Admission'', ''Other Non-Elective Admission'', ''Emergency Admission'')			
+			and Record_Classification <> ''Inpatient - Unclassified Spell''			
+			and Age > 17			
+			and LOS_Adjusted > 0
+			and Attendance_Date between ''' + @StartDate + ''' and ''' + @EndDate + ''' 
+			group by Provider_Current
+					 ,DATEADD(MONTH, DATEDIFF(MONTH, 0, [Attendance_Date]), 0)
+					 ,case when Dimention_4 = ''Specific Acute'' then ''Acute Inpatient'' 
+					       when Dimention_4 = ''Maternity'' then ''Maternity'' 
+						   end')
+
+			END
+			END
+
+					UPDATE [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Elements_Refresh_Log]
+					SET Refresh_End = GETDATE(),
+					Refresh_Status = 'Completed'
+					where Audit_ID = (select max(Audit_ID) from [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Elements_Refresh_Log] 
+					where Element_ID = @Element_ID)
+
+			END TRY
+			BEGIN CATCH
+
+					UPDATE [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Elements_Refresh_Log]
+					SET Refresh_End = GETDATE(),
+					Refresh_Status = 'Failed'
+					where Audit_ID = (select max(Audit_ID) from [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Elements_Refresh_Log] 
+					where Element_ID = @Element_ID)
+
+
+			
+			END CATCH
+
+			  DELETE FROM [NHSE_AlcoholTobacco].[temp].[Elements_Audit] where Row = @Row
+			  SET @Row = @Row+1
+			  SET @Element_ID = (select Element_ID from [NHSE_AlcoholTobacco].[temp].[Elements_Audit] where Row = @Row)
+			  SET @Element_Source = (select Element_Source from [NHSE_AlcoholTobacco].[temp].[Elements_Audit] where Row = @Row)
+			  SET @Element_Logic = (select Element_Logic from [NHSE_AlcoholTobacco].[temp].[Elements_Audit] where Row = @Row)
+			  SET @Element_Count = @Element_Count+1
+   CONTINUE
+     
+/* next batch */ 
+END
+
+/* create index on table */ 
+CREATE CLUSTERED COLUMNSTORE INDEX CCI_Index ON [dbo].[TobaccoDependence_Elements] WITH (DROP_EXISTING = OFF)
+
+select * 
+from [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Elements_Refresh_Log]
+where Run_ID = @Run_ID
+order by Audit_ID
