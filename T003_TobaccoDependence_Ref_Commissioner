@@ -1,0 +1,22 @@
+ IF OBJECT_ID('[NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Ref_Commissioner]') IS NOT NULL DROP TABLE 
+[NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Ref_Commissioner]
+
+select distinct Organisation_Code
+				,Organisation_Name
+				,Organisation_Code_Name 
+				,b.ICB_Code
+				,Integrated_Care_Board_Name as ICB_Name
+				,CONCAT(b.ICB_Code, ': ', Integrated_Care_Board_Name) as ICB_Code_Name
+				,d.ICB_Map
+				,b.Region_Code
+				,b.Region_Name
+				,CONCAT(b.Region_Code, ': ', b.Region_Name) as Region_Code_Name
+				,c.Region_Map
+				,e.SubICB_Map
+into [NHSE_AlcoholTobacco].[dbo].[TobaccoDependence_Ref_Commissioner]
+from [NHSE_Reference].[dbo].[vw_Ref_ODS_Commissioner_Hierarchies] b
+left join [dbo].[TobaccoDependence_Ref_Region] c on b.Region_Code = c.Region_Code
+left join [dbo].[TobaccoDependence_Ref_ICB] d on b.ICB_Code = d.ICB_Code
+left join [dbo].[TobaccoDependence_Ref_SubICB] e on b.Organisation_Code = e.SubICB_Code
+where Effective_To is null 
+and NHSE_Organisation_Type = 'Clinical Commissioning group'
