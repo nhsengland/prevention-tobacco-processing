@@ -703,7 +703,7 @@ def build_elements(clean_path, out_path):
             where Dimention_4 = 'Specific Acute' \
             and Dimention_1 in ('Ord. Elective Admission', 'Other Non-elective Admission', 'Emergency Admission')	\
             and Record_Classification <> 'Inpatient - Unclassified Spell'	\
-            and Age > 17 \
+            and Age >= 16 \
             and LOS_Adjusted > 0 \
             group by Provider_Current \
                     ,cast(concat(Year(Attendance_Date), '-', Month(Attendance_Date), '-', '01') as date)"
